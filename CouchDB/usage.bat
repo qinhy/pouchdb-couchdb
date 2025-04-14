@@ -1,0 +1,1 @@
+curl -X PUT http://admin:admin@localhost:5984/mydb/_design/filters  -H "Content-Type: application/json"  -d @filters.json

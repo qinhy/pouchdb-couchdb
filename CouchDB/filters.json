@@ -1,0 +1,7 @@
+{
+    "_id": "_design/filters",
+    "filters": {
+      "by_timestamp": "function(doc, req) { if (!doc.timestamp) return false; var since = req.query.since; return doc.timestamp > since; }"
+    }
+}
+  

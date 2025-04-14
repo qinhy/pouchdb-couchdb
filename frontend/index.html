@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <title>CouchDB Sync App</title>
+  <script src="https://cdn.jsdelivr.net/npm/pouchdb@7.3.1/dist/pouchdb.min.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+    }
+
+    input,
+    textarea,
+    button {
+      display: block;
+      margin-top: 8px;
+    }
+
+    .doc {
+      border-bottom: 1px solid #ccc;
+      padding: 10px 0;
+    }
+  </style>
+</head>
+
+
+<body>
+  <h2>Login</h2>
+  <form id="loginForm">
+    <input type="text" id="username" placeholder="Username" required>
+    <input type="password" id="password" placeholder="Password" required>
+    <button type="submit">Login</button>
+  </form>
+
+  <div id="app" style="display: none;">
+    <h3>Hello, <span id="userDisplay"></span>!</h3>
+    <button id="logoutButton">Logout</button>
+
+    <hr>
+    <h4>Create Document</h4>
+    <form id="createForm">
+      <input type="text" id="docTitle" placeholder="Title" required>
+      <textarea id="docContent" placeholder="Content..."></textarea>
+      <button type="submit">Add Doc</button>
+    </form>
+
+    <hr>
+    <h4>Sync Remote -> Local (Filtered)</h4>
+    <label>Since (timestamp):</label>
+    <input type="datetime-local" id="sinceInput" value="2025-01-01T00:00">
+    <button id="syncButton">Sync Now</button>
+
+    <hr>
+    <h4>Documents</h4>
+    <div id="docsList"></div>
+
+    <pre id="output"></pre>
+  </div>
+
+  
+  <script>
+    const baseUrl = 'http://localhost:8080/db';
+    const dbName = 'mydb';
+    const localDB = new PouchDB('my_local_db');
+  
+    let remoteDB;
+  
+    const loginForm = document.getElementById('loginForm');
+    const appDiv = document.getElementById('app');
+    const output = document.getElementById('output');
+    const userDisplay = document.getElementById('userDisplay');
+    const syncButton = document.getElementById('syncButton');
+    const logoutButton = document.getElementById('logoutButton');
+    const docsList = document.getElementById('docsList');
+    const createForm = document.getElementById('createForm');
+  
+    loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const username = document.getElementById('username').value;
+      const password = document.getElementById('password').value;
+      await login(username, password);
+    });
+  
+    logoutButton.addEventListener('click', async () => {
+      await fetch(`${baseUrl}/_session`, {
+        method: 'DELETE',
+        credentials: 'include'
+      });
+      location.reload();
+    });
+  
+    createForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const title = document.getElementById('docTitle').value.trim();
+      const content = document.getElementById('docContent').value.trim();
+      await newDoc(title, content);
+    });
+  
+    // ✅ ADDED: Function to check session and auto-login
+    async function checkSession() {
+      const res = await fetch(`${baseUrl}/_session`, {
+        credentials: 'include'
+      });
+      const data = await res.json();
+  
+      if (data.ok && data.userCtx && data.userCtx.name) {
+        const username = data.userCtx.name;
+        userDisplay.textContent = username;
+        loginForm.style.display = 'none';
+        appDiv.style.display = 'block';
+  
+        remoteDB = new PouchDB(`${baseUrl}/${dbName}`, {
+          fetch: (url, opts) => {
+            opts.credentials = 'include';
+            return PouchDB.fetch(url, opts);
+          }
+        });
+  
+        startSync();
+        loadDocs();
+      }
+    }
+  
+    // ✅ ADDED: Function to login and set up app
+    async function login(username, password) {
+      const res = await fetch(`${baseUrl}/_session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ name: username, password }),
+        credentials: 'include'
+      });
+  
+      const data = await res.json();
+      if (data.ok) {
+        userDisplay.textContent = username;
+        loginForm.style.display = 'none';
+        appDiv.style.display = 'block';
+  
+        remoteDB = new PouchDB(`${baseUrl}/${dbName}`, {
+          fetch: (url, opts) => {
+            opts.credentials = 'include';
+            return PouchDB.fetch(url, opts);
+          }
+        });
+  
+        startSync();
+        loadDocs();
+      } else {
+        alert('Login failed. Please try again.');
+      }
+    }
+  
+    // ✅ Extracted: Sync setup logic into reusable function
+    function startSync() {
+      const sinceValue = document.getElementById('sinceInput').value;
+      const isoTimestamp = new Date(sinceValue).toISOString();
+  
+      PouchDB.sync(localDB, remoteDB, {
+        live: true,
+        retry: true
+        // Uncomment this if you use a filter
+        // filter: 'filters/by_timestamp',
+        // query_params: { since: isoTimestamp }
+      })
+      .on('change', info => {
+        output.textContent = '🔄 Sync change:\n' + JSON.stringify(info, null, 2);
+        loadDocs();
+      })
+      .on('paused', info => {
+        output.textContent = '⏸️ Sync paused';
+      })
+      .on('active', () => {
+        output.textContent = '▶️ Sync active...';
+      })
+      .on('error', err => {
+        output.textContent = '❌ Sync error:\n' + err.message;
+      });
+    }
+  
+    async function newDoc(title, content) {
+      if (!title || !content) {
+        alert('Title and content cannot be empty.');
+        return; 
+      }
+  
+      const doc = {
+        title,
+        content,
+        timestamp: new Date().toISOString() 
+      };
+  
+      const result = await localDB.post(doc);
+      output.textContent = '✅ Created locally:\n' + JSON.stringify(result, null, 2);
+      createForm.reset();
+      loadDocs();
+    }
+  
+    async function loadDocs() {
+      const result = await localDB.allDocs({ include_docs: true, descending: true });
+      docsList.innerHTML = '';
+  
+      result.rows.forEach(row => {
+        const doc = row.doc;
+        if (!doc.title) return;
+        const div = document.createElement('div');
+        div.className = 'doc';
+  
+        div.innerHTML = `
+          <strong>${doc.title}</strong><br>
+          <small><code>ID: ${doc._id}</code></small><br>
+          <em>${doc.timestamp}</em><br>
+          <div>${doc.content}</div>
+          <button onclick="editDoc('${doc._id}')">Edit</button>
+          <button onclick="deleteDoc('${doc._id}', '${doc._rev}')">Delete</button>
+        `;
+  
+        docsList.appendChild(div);
+      });
+    }
+  
+    async function deleteDoc(id, rev) {
+      if (!confirm('Delete this document?')) return;
+      const result = await localDB.remove(id, rev);
+      output.textContent = '🗑️ Deleted locally:\n' + JSON.stringify(result, null, 2);
+      loadDocs();
+    }
+  
+    async function editDoc(id) {
+      const doc = await localDB.get(id);
+      const newTitle = prompt('New title:', doc.title);
+      const newContent = prompt('New content:', doc.content);
+      if (newTitle !== null) {
+        doc.title = newTitle;
+        doc.content = newContent;
+        const result = await localDB.put(doc);
+        output.textContent = '✏️ Updated locally:\n' + JSON.stringify(result, null, 2);
+        loadDocs();
+      }
+    }
+  
+    window.editDoc = editDoc;
+    window.deleteDoc = deleteDoc;
+  
+    syncButton.addEventListener('click', async () => {
+      const sinceValue = document.getElementById('sinceInput').value;
+      const isoTimestamp = new Date(sinceValue).toISOString();
+  
+      try {
+        const result = await localDB.replicate.from(remoteDB, {
+          filter: 'filters/by_timestamp',
+          query_params: { since: isoTimestamp }
+        });
+        output.textContent = '📥 Manual sync completed:\n' + JSON.stringify(result, null, 2);
+        loadDocs();
+      } catch (err) {
+        output.textContent = '❌ Manual sync failed:\n' + err.message;
+      }
+    });
+  
+    // ✅ Check session on load
+    window.addEventListener('load', checkSession);
+  </script>
+  
+
+
+</body>
+
+</html>
