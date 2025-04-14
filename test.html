@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>CouchDB Login</title>
+  <script src="https://cdn.jsdelivr.net/npm/pouchdb@7.3.1/dist/pouchdb.min.js"></script>
+</head>
+<body>
+  <h2>Login</h2>
+  <form id="loginForm">
+    <label>Server URL:</label>
+    <input type="text" id="serverUrl" value="http://localhost:5984" required><br>
+    <label>Username:</label>
+    <input type="text" id="username" required><br>
+    <label>Password:</label>
+    <input type="password" id="password" required><br>
+    <button type="submit">Login</button>
+  </form>
+
+  <div id="app" style="display: none;">
+    <h3>Welcome, <span id="userDisplay"></span>!</h3>
+    <button id="syncButton">Sync Now</button>
+    <pre id="output"></pre>
+  </div>
+
+  <script>
+    const loginForm = document.getElementById('loginForm');
+    const appDiv = document.getElementById('app');
+    const output = document.getElementById('output');
+    const userDisplay = document.getElementById('userDisplay');
+    const syncButton = document.getElementById('syncButton');
+
+    loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const serverUrl = document.getElementById('serverUrl').value;
+      const username = document.getElementById('username').value;
+      const password = document.getElementById('password').value;
+
+      try {
+        // Add CORS proxy if needed
+        const useProxy = !serverUrl.includes('localhost') && !serverUrl.includes('127.0.0.1');
+        const proxyUrl = useProxy ? 'https://cors-anywhere.herokuapp.com/' : '';
+        
+        const res = await fetch(`${proxyUrl}${serverUrl}/_session`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Origin': window.location.origin
+          },
+          body: new URLSearchParams({ name: username, password }),
+          credentials: 'include',
+          mode: 'cors'
+        });
+
+        const data = await res.json();
+
+        if (data.ok) {
+          userDisplay.textContent = username;
+          loginForm.style.display = 'none';
+          appDiv.style.display = 'block';
+        } else {
+          alert('Login failed');
+        }
+      } catch (err) {
+        alert('Login error: ' + err.message);
+      }
+    });
+
+    syncButton.addEventListener('click', () => {
+      const serverUrl = document.getElementById('serverUrl').value;
+      const localDB = new PouchDB('my_local_db');
+      
+      // Add CORS proxy if needed
+      const useProxy = !serverUrl.includes('localhost') && !serverUrl.includes('127.0.0.1');
+      const proxyUrl = useProxy ? 'https://cors-anywhere.herokuapp.com/' : '';
+      
+      const remoteDB = new PouchDB(`${proxyUrl}${serverUrl}/mydb`, {
+        fetch: (url, opts) => {
+          opts.credentials = 'include';
+          opts.mode = 'cors';
+          opts.headers = opts.headers || {};
+          opts.headers['Origin'] = window.location.origin;
+          return PouchDB.fetch(url, opts);
+        }
+      });
+
+      localDB.sync(remoteDB, {
+        live: false,
+        retry: false
+      }).on('complete', info => {
+        output.textContent = '✅ Sync complete:\n' + JSON.stringify(info, null, 2);
+      }).on('error', err => {
+        output.textContent = '❌ Sync error:\n' + err.message;
+      });
+    });
+  </script>
+</body>
+</html>
