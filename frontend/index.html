@@ -61,7 +61,7 @@
 
   
   <script>
-    const baseUrl = 'http://localhost:8080/db';
+    const baseUrl = window.location.protocol + '//' + window.location.hostname + (window.location.port ? ':' + window.location.port : '') + '/db';
     const dbName = 'mydb';
     const localDB = new PouchDB('my_local_db');
   
